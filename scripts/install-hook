@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Install Persona Guard's one user-level Codex hook."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+
+EVENT_NAME = "UserPromptSubmit"
+HOOK_COMMAND = 'python3 "$HOME/.codex/persona-guard/hook_client.py"'
+HOOK_TYPE = "command"
+HOOK_TIMEOUT_SECONDS = 5
+
+
+def _home() -> Path:
+    value = os.environ.get("HOME")
+    if not value:
+        raise RuntimeError("HOME must be set; refusing to choose a real home directory")
+    return Path(value)
+
+
+def _paths() -> tuple[Path, Path, Path]:
+    home = _home()
+    codex_dir = home / ".codex"
+    return codex_dir / "hooks.json", codex_dir / "persona-guard", codex_dir / "persona-guard" / "hook_client.py"
+
+
+def _source_client() -> Path:
+    return Path(__file__).resolve().parent.parent / "persona_guard" / "hook_client.py"
+
+
+def _read_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"hooks": {}}
+    if not path.is_file():
+        raise RuntimeError(f"cannot safely use {path}: it is not a regular file")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot safely parse {path}; no changes made") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"cannot safely merge {path}: the root must be an object")
+    hooks = value.get("hooks")
+    if "hooks" in value and not isinstance(hooks, dict):
+        raise RuntimeError(f"cannot safely merge {path}: hooks must be an object")
+    return value
+
+
+def _is_persona_handler(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == HOOK_TYPE
+        and value.get("command") == HOOK_COMMAND
+    )
+
+
+def _new_handler_group() -> dict[str, Any]:
+    return {
+        "hooks": [
+            {
+                "type": HOOK_TYPE,
+                "command": HOOK_COMMAND,
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+        ]
+    }
+
+
+def _install_event_entry(entry: Any, seen: list[bool]) -> tuple[Any | None, bool]:
+    """Keep the first Persona Guard command and remove duplicate copies."""
+
+    if _is_persona_handler(entry):
+        if seen[0]:
+            return None, True
+        seen[0] = True
+        return entry, False
+
+    if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+        return entry, False
+
+    changed = False
+    children: list[Any] = []
+    for child in entry["hooks"]:
+        if _is_persona_handler(child):
+            if seen[0]:
+                changed = True
+                continue
+            seen[0] = True
+        children.append(child)
+
+    if not changed:
+        return entry, False
+    updated = dict(entry)
+    updated["hooks"] = children
+    return updated, True
+
+
+def _merge_handler(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    hooks = config.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise RuntimeError("hooks must be an object")
+
+    if EVENT_NAME not in hooks:
+        entries = []
+    else:
+        entries = hooks[EVENT_NAME]
+        if not isinstance(entries, list):
+            raise RuntimeError(f"cannot safely merge {EVENT_NAME}: it must be a list")
+
+    seen = [False]
+    changed = EVENT_NAME not in hooks
+    updated_entries: list[Any] = []
+    for entry in entries:
+        updated, entry_changed = _install_event_entry(entry, seen)
+        changed = changed or entry_changed
+        if updated is not None:
+            updated_entries.append(updated)
+
+    if not seen[0]:
+        updated_entries.append(_new_handler_group())
+        changed = True
+    if changed:
+        hooks[EVENT_NAME] = updated_entries
+    return config, changed
+
+
+def _backup(path: Path) -> Path:
+    base = path.with_name(path.name + ".persona-guard.bak")
+    destination = base
+    if destination.exists():
+        destination = path.with_name(
+            path.name + f".persona-guard.bak.{time.time_ns()}"
+        )
+    shutil.copy2(path, destination)
+    return destination
+
+
+def _write_config(path: Path, config: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            json.dump(config, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def _install_client(source: Path, target_dir: Path, target: Path) -> None:
+    if not source.is_file():
+        raise RuntimeError(f"missing hook client: {source}")
+    target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(target_dir, 0o700)
+    except OSError:
+        pass
+    if not target.exists() or target.read_bytes() != source.read_bytes():
+        shutil.copy2(source, target)
+    os.chmod(target, stat.S_IMODE(target.stat().st_mode) | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+
+def main() -> int:
+    hooks_path, target_dir, target_client = _paths()
+    source_client = _source_client()
+    config = _read_config(hooks_path)
+    config, changed = _merge_handler(config)
+
+    if changed and hooks_path.exists():
+        _backup(hooks_path)
+    _install_client(source_client, target_dir, target_client)
+    if changed:
+        _write_config(hooks_path, config)
+
+    print(f"Persona Guard hook installed in {target_dir}")
+    if changed and hooks_path.exists():
+        print(f"Hook configuration updated: {hooks_path}")
+    print("Review and trust the command from Codex /hooks before using it.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as error:  # noqa: BLE001 - give a concise CLI error.
+        print(f"install-hook: {error}", file=sys.stderr)
+        sys.exit(1)

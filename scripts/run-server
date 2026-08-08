@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The backend reads the inherited GMEM_DEEPSEEK_API_KEY first, then
+# DEEPSEEK_API_KEY.  This launcher intentionally does not load a dotenv file.
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
+cd "${PROJECT_ROOT}"
+
+exec python3 -m persona_guard.server

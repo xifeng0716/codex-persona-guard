@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Remove only Persona Guard's user-level Codex hook and installed client."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+
+EVENT_NAME = "UserPromptSubmit"
+HOOK_COMMAND = 'python3 "$HOME/.codex/persona-guard/hook_client.py"'
+HOOK_TYPE = "command"
+
+
+def _home() -> Path:
+    value = os.environ.get("HOME")
+    if not value:
+        raise RuntimeError("HOME must be set; refusing to choose a real home directory")
+    return Path(value)
+
+
+def _paths() -> tuple[Path, Path, Path]:
+    home = _home()
+    codex_dir = home / ".codex"
+    return codex_dir / "hooks.json", codex_dir / "persona-guard", codex_dir / "persona-guard" / "hook_client.py"
+
+
+def _is_persona_handler(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == HOOK_TYPE
+        and value.get("command") == HOOK_COMMAND
+    )
+
+
+def _read_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    if not path.is_file():
+        raise RuntimeError(f"cannot safely use {path}: it is not a regular file")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot safely parse {path}; no changes made") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"cannot safely merge {path}: the root must be an object")
+    hooks = value.get("hooks")
+    if "hooks" in value and not isinstance(hooks, dict):
+        raise RuntimeError(f"cannot safely merge {path}: hooks must be an object")
+    return value
+
+
+def _remove_from_entry(entry: Any) -> tuple[Any | None, bool]:
+    if _is_persona_handler(entry):
+        return None, True
+    if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+        return entry, False
+
+    kept = [child for child in entry["hooks"] if not _is_persona_handler(child)]
+    if len(kept) == len(entry["hooks"]):
+        return entry, False
+    if not kept:
+        return None, True
+    updated = dict(entry)
+    updated["hooks"] = kept
+    return updated, True
+
+
+def _remove_handler(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    hooks = config.get("hooks")
+    if not isinstance(hooks, dict):
+        return config, False
+    if EVENT_NAME not in hooks:
+        return config, False
+    entries = hooks[EVENT_NAME]
+    if not isinstance(entries, list):
+        raise RuntimeError(f"cannot safely merge {EVENT_NAME}: it must be a list")
+
+    changed = False
+    updated_entries: list[Any] = []
+    for entry in entries:
+        updated, entry_changed = _remove_from_entry(entry)
+        changed = changed or entry_changed
+        if updated is not None:
+            updated_entries.append(updated)
+    if changed:
+        if updated_entries:
+            hooks[EVENT_NAME] = updated_entries
+        else:
+            del hooks[EVENT_NAME]
+    return config, changed
+
+
+def _backup(path: Path) -> Path:
+    base = path.with_name(path.name + ".persona-guard.bak")
+    destination = base
+    if destination.exists():
+        destination = path.with_name(
+            path.name + f".persona-guard.bak.{time.time_ns()}"
+        )
+    shutil.copy2(path, destination)
+    return destination
+
+
+def _write_config(path: Path, config: dict[str, Any]) -> None:
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            json.dump(config, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+
+
+def _remove_installed_files(target_dir: Path, target_client: Path) -> None:
+    if target_client.is_file() or target_client.is_symlink():
+        target_client.unlink()
+
+    bytecode_dir = target_dir / "__pycache__"
+    if bytecode_dir.is_dir() and not bytecode_dir.is_symlink():
+        for child in bytecode_dir.iterdir():
+            if child.is_file() and child.name.startswith("hook_client.") and child.suffix == ".pyc":
+                child.unlink()
+        try:
+            bytecode_dir.rmdir()
+        except OSError:
+            pass
+    try:
+        target_dir.rmdir()
+    except OSError:
+        pass
+
+
+def main() -> int:
+    hooks_path, target_dir, target_client = _paths()
+    config = _read_config(hooks_path)
+    config, changed = _remove_handler(config)
+    if changed:
+        _backup(hooks_path)
+        _write_config(hooks_path, config)
+    _remove_installed_files(target_dir, target_client)
+    print("Persona Guard hook removed; unrelated Codex hooks were preserved.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as error:  # noqa: BLE001 - give a concise CLI error.
+        print(f"uninstall-hook: {error}", file=sys.stderr)
+        sys.exit(1)

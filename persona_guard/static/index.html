@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Persona Guard</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#dashboard-main">跳到控制台</a>
+
+    <header class="site-header">
+      <div class="header-copy">
+        <p class="eyebrow">Persona Guard <span aria-hidden="true">·</span> 本地运行</p>
+        <h1>小门卫</h1>
+        <p class="header-description">
+          管理绑定、判断规则与校准记录。
+        </p>
+      </div>
+      <div class="header-actions">
+        <div id="connection-status" class="connection-status" role="status" aria-live="polite">
+          <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
+          <span id="connection-label">正在连接…</span>
+        </div>
+        <button id="refresh-button" class="button" type="button">立即刷新</button>
+      </div>
+    </header>
+
+    <main id="dashboard-main" class="dashboard-main">
+      <section class="dashboard-section" aria-labelledby="runtime-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">01 <span aria-hidden="true">/</span> 运行状态</p>
+            <h2 id="runtime-heading">服务与总开关</h2>
+            <p class="section-description">查看本地服务，或暂停门卫而不丢失已有状态。</p>
+          </div>
+        </div>
+
+        <div class="runtime-grid">
+          <article class="panel runtime-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>门卫状态</h3>
+                <p>总开关控制所有已启用的绑定。</p>
+              </div>
+              <span id="runtime-state-badge" class="status-badge status-neutral">未知</span>
+            </div>
+
+            <label class="switch-row" for="global-enabled">
+              <span class="switch-copy">
+                <strong>启用全部门卫</strong>
+                <span>关闭后不判断、不转移状态、不注入，也不记录对话正文。</span>
+              </span>
+              <input id="global-enabled" class="switch-input" type="checkbox" role="switch" aria-checked="false" disabled />
+              <span class="switch-visual" aria-hidden="true"><span></span></span>
+            </label>
+            <p id="global-switch-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+
+            <div class="runtime-note">
+              <strong>目标发现仍会工作</strong>
+              <span>门卫关闭时，hook 仍只上报新线程和工作区的元数据。</span>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <h3>服务概览</h3>
+                <p>来自本地 API 的当前状态。</p>
+              </div>
+            </div>
+            <dl class="status-grid">
+              <div class="status-item">
+                <dt>服务</dt>
+                <dd id="service-health">加载中…</dd>
+              </div>
+              <div class="status-item">
+                <dt>DeepSeek Key</dt>
+                <dd id="key-status">加载中…</dd>
+              </div>
+              <div class="status-item">
+                <dt>判断模型</dt>
+                <dd id="model-status" class="wrap-anywhere">加载中…</dd>
+              </div>
+              <div class="status-item">
+                <dt>规则版本</dt>
+                <dd id="policy-revision-status">加载中…</dd>
+              </div>
+              <div class="status-item">
+                <dt>绑定</dt>
+                <dd id="binding-count-status">加载中…</dd>
+              </div>
+              <div class="status-item">
+                <dt>校准记录</dt>
+                <dd id="record-count-status">加载中…</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="dashboard-section" aria-labelledby="bindings-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">02 <span aria-hidden="true">/</span> 绑定</p>
+            <h2 id="bindings-heading">绑定与目标发现</h2>
+            <p class="section-description">选择已发现的线程或工作区，并设置专属 HIT 提醒。</p>
+          </div>
+          <span id="binding-count-label" class="section-count">— 个绑定</span>
+        </div>
+
+        <div class="bindings-layout">
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <h3>已发现目标</h3>
+                <p>这里只显示元数据；未绑定目标的消息正文不会保存。</p>
+              </div>
+            </div>
+            <div id="discoveries-list" class="stack" aria-live="polite">
+              <p class="loading-message">正在加载目标…</p>
+            </div>
+          </article>
+
+          <article id="binding-editor-panel" class="panel">
+            <div class="panel-heading">
+              <div>
+                <h3 id="binding-form-heading">创建绑定</h3>
+                <p>线程绑定优先于工作区绑定。</p>
+              </div>
+            </div>
+
+            <form id="binding-form" class="form-stack">
+              <input id="binding-id" type="hidden" />
+              <div class="field-grid">
+                <label class="field">
+                  <span class="field-label">绑定名称</span>
+                  <input id="binding-name" class="input" name="name" type="text" maxlength="120" autocomplete="off" required />
+                </label>
+                <label class="field">
+                  <span class="field-label">目标类型</span>
+                  <select id="binding-target-type" class="select" name="target_type" required>
+                    <option value="thread">Codex 线程</option>
+                    <option value="workspace">精确工作区</option>
+                  </select>
+                </label>
+                <label class="field field-wide">
+                  <span class="field-label">已发现目标</span>
+                  <select id="binding-target-value" class="select target-select" name="target_value" required>
+                    <option value="">正在加载目标…</option>
+                  </select>
+                  <span class="field-help">目标值按 hook 实际发现的内容保存。</span>
+                </label>
+                <label class="field field-wide">
+                  <span class="field-label">HIT Reminder</span>
+                  <textarea id="binding-reminder" class="textarea reminder-textarea" name="reminder" rows="5" maxlength="4000" required></textarea>
+                  <span class="field-help">仅在本轮判断为 HIT 时注入这段文字。</span>
+                </label>
+              </div>
+              <label class="checkbox-row" for="binding-enabled">
+                <input id="binding-enabled" name="enabled" type="checkbox" checked />
+                <span><strong>启用此绑定</strong><small>关闭不会删除状态或校准记录。</small></span>
+              </label>
+              <div class="form-actions">
+                <button id="binding-submit" class="button primary" type="submit">创建绑定</button>
+                <button id="binding-cancel" class="button" type="button" hidden>取消编辑</button>
+                <p id="binding-form-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+              </div>
+            </form>
+          </article>
+        </div>
+
+        <article class="panel binding-list-panel">
+          <div class="panel-heading">
+            <div>
+              <h3>已有绑定</h3>
+              <p>每个目标最多只能有一个绑定。</p>
+            </div>
+          </div>
+          <div id="bindings-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
+          <div id="binding-list" class="stack">
+            <p class="loading-message">正在加载绑定…</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="dashboard-section" aria-labelledby="policy-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">03 <span aria-hidden="true">/</span> 判断规则</p>
+            <h2 id="policy-heading">全局 Detector Policy</h2>
+            <p class="section-description">所有绑定共用这一份规则；每轮记录会保存当时的完整版本。</p>
+          </div>
+          <span id="policy-revision-label" class="section-count">版本 —</span>
+        </div>
+
+        <article class="panel policy-panel">
+          <div class="warning-callout" role="note">
+            <strong>保存后立即生效</strong>
+            <span>保存规则会把所有 Guard State 重置为 <code>NORMAL</code>。</span>
+          </div>
+          <form id="policy-form" class="form-stack">
+            <label class="field" for="policy-text">
+              <span class="field-label">规则正文</span>
+              <textarea id="policy-text" class="textarea policy-textarea" name="text" rows="12" required placeholder="输入 DeepSeek 判断规则…"></textarea>
+            </label>
+            <div id="policy-confirmation" class="inline-confirm" hidden>
+              <p><strong>应用这份规则？</strong> 所有 Guard State 都会重置为 <code>NORMAL</code>。</p>
+              <div class="confirm-actions">
+                <button class="button" type="button" data-action="cancel-policy-save">取消</button>
+                <button class="button primary" type="button" data-action="confirm-policy-save">应用规则</button>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button id="policy-submit" class="button primary" type="submit">保存规则</button>
+              <p id="policy-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <section class="dashboard-section" aria-labelledby="records-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">04 <span aria-hidden="true">/</span> 校准</p>
+            <h2 id="records-heading">DeepSeek 判断记录</h2>
+            <p class="section-description">最新记录在前；展开可查看当轮完整输入、判断与状态迁移。</p>
+          </div>
+          <span id="record-count-label" class="section-count">— 条记录</span>
+        </div>
+
+        <article class="panel records-panel">
+          <div class="records-toolbar">
+            <div class="filter-fields">
+              <label class="filter-field">
+                <span>绑定</span>
+                <select id="record-binding-filter" class="select">
+                  <option value="">全部绑定</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>结果</span>
+                <select id="record-result-filter" class="select">
+                  <option value="">全部结果</option>
+                  <option value="HIT">HIT</option>
+                  <option value="WATCH">WATCH</option>
+                  <option value="NONE">NONE</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
+              </label>
+            </div>
+            <div class="record-actions">
+              <button id="clear-binding-records" class="button" type="button" disabled>清除此绑定</button>
+              <button id="clear-all-records" class="button danger" type="button">清除全部</button>
+            </div>
+          </div>
+          <div id="records-confirmation" class="inline-confirm" hidden></div>
+          <div id="records-feedback" class="inline-feedback" role="status" aria-live="polite"></div>
+          <div id="records-list" class="records-list" aria-live="polite">
+            <p class="loading-message">正在加载记录…</p>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <noscript>
+      <p class="noscript-message">Persona Guard 需要启用 JavaScript 才能连接本地 API。</p>
+    </noscript>
+    <script src="./app.js" defer></script>
+  </body>
+</html>
