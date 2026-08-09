@@ -44,7 +44,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(body["max_tokens"], 100)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["thinking"], {"type": "disabled"})
-        self.assertEqual(captured["timeout"], 4.0)
+        self.assertEqual(captured["timeout"], 6.0)
         self.assertEqual(captured["request"].get_header("Authorization"), "Bearer secret")
 
     def test_primary_key_precedes_portable_key_and_missing_key_fails(self):

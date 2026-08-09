@@ -88,6 +88,19 @@ class TranscriptTests(unittest.TestCase):
             ],
         )
 
+    def test_stops_after_recent_window_without_parsing_old_prefix(self):
+        path = Path(self.temp_dir.name) / "long.jsonl"
+        recent = []
+        for index in range(3):
+            recent.append({"role": "user", "content": f"u{index}"})
+            recent.append({"role": "assistant", "content": f"a{index}"})
+        path.write_text(
+            "not valid json\n"
+            + "".join(json.dumps(value) + "\n" for value in recent),
+            encoding="utf-8",
+        )
+        self.assertEqual(read_history(str(path), "current"), recent)
+
 
 if __name__ == "__main__":
     unittest.main()

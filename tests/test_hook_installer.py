@@ -94,7 +94,7 @@ class HookInstallerTests(unittest.TestCase):
         handlers = self.persona_handlers(installed)
         self.assertEqual(len(handlers), 1)
         self.assertEqual(handlers[0]["type"], "command")
-        self.assertEqual(handlers[0]["timeout"], 5)
+        self.assertEqual(handlers[0]["timeout"], 8)
         self.assertIn("$HOME/.codex/persona-guard/hook_client.py", handlers[0]["command"])
 
         target = self.home / ".codex" / "persona-guard" / "hook_client.py"
@@ -110,6 +110,7 @@ class HookInstallerTests(unittest.TestCase):
         config = self.read_hooks()
         entries = config["hooks"]["UserPromptSubmit"]
         self.assertIsInstance(entries, list)
+        self.persona_handlers(config)[0]["timeout"] = 5
         entries.append({"hooks": [{"type": "command", "command": HOOK_COMMAND}]})
         self.hooks_path.write_text(json.dumps(config), encoding="utf-8")
         backup_count_before = len(list(self.codex_dir.glob("hooks.json.persona-guard.bak*")))
@@ -117,7 +118,9 @@ class HookInstallerTests(unittest.TestCase):
         second = self.run_script(INSTALLER)
 
         self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertEqual(len(self.persona_handlers(self.read_hooks())), 1)
+        handlers = self.persona_handlers(self.read_hooks())
+        self.assertEqual(len(handlers), 1)
+        self.assertEqual(handlers[0]["timeout"], 8)
         self.assertEqual(
             len(list(self.codex_dir.glob("hooks.json.persona-guard.bak*"))),
             backup_count_before + 1,

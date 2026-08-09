@@ -92,7 +92,8 @@ also leaves the hooks configuration backups described above.
 ## Fail-soft behavior
 
 The installed client reads one JSON object from stdin and gives it to the
-local service with a five-second total request budget. A malformed input,
+local service with a seven-second total request budget, inside the Codex
+command's eight-second timeout. A malformed input,
 missing service, timeout, local/HTTP error, or invalid JSON response exits
 zero and prints nothing, so Codex continues normally. A valid service JSON
 response is forwarded unchanged. Detector failures likewise preserve the

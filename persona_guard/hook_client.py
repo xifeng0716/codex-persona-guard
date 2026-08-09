@@ -18,7 +18,7 @@ from typing import BinaryIO, TextIO
 
 
 HOOK_URL = "http://127.0.0.1:43821/api/hook"
-TOTAL_TIMEOUT_SECONDS = 5.0
+TOTAL_TIMEOUT_SECONDS = 7.0
 
 
 def _reject_non_json_constant(value: str) -> None:

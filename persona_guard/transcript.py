@@ -96,40 +96,44 @@ def _extract_candidates(value: Any) -> list[TranscriptMessage]:
     return candidates
 
 
-def _json_objects(path: str) -> Iterable[dict]:
+def _json_objects_reverse(path: str, block_size: int = 64 * 1024) -> Iterable[dict]:
+    """Yield JSONL objects newest first without loading the whole file."""
+
     try:
-        with open(path, "r", encoding="utf-8") as stream:
-            lines = stream.readlines()
+        with open(path, "rb") as stream:
+            stream.seek(0, 2)
+            position = stream.tell()
+            remainder = b""
+            while position > 0:
+                size = min(block_size, position)
+                position -= size
+                stream.seek(position)
+                parts = (stream.read(size) + remainder).split(b"\n")
+                remainder = parts[0]
+                for line in reversed(parts[1:]):
+                    if not line.strip():
+                        continue
+                    value = json.loads(line)
+                    if not isinstance(value, dict):
+                        raise TranscriptError(
+                            "transcript_unparseable",
+                            "transcript lines must be JSON objects",
+                        )
+                    yield value
+            if remainder.strip():
+                value = json.loads(remainder)
+                if not isinstance(value, dict):
+                    raise TranscriptError(
+                        "transcript_unparseable",
+                        "transcript lines must be JSON objects",
+                    )
+                yield value
+    except TranscriptError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise TranscriptError("transcript_unparseable", "invalid transcript JSONL") from exc
     except (OSError, UnicodeError) as exc:
         raise TranscriptError("transcript_unreadable", "unable to read transcript") from exc
-
-    nonempty = [line for line in lines if line.strip()]
-    if not nonempty:
-        return []
-
-    # Codex writes JSONL. Accepting a single JSON array costs little and keeps
-    # the reader harmlessly useful for exported local transcripts in tests.
-    if len(nonempty) == 1 and nonempty[0].lstrip().startswith("["):
-        try:
-            parsed = json.loads(nonempty[0])
-        except (TypeError, ValueError) as exc:
-            raise TranscriptError("transcript_unparseable", "invalid transcript JSON") from exc
-        if not isinstance(parsed, list):
-            raise TranscriptError("transcript_unparseable", "transcript JSON must be an object list")
-        return [item for item in parsed if isinstance(item, dict)]
-
-    objects = []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except (TypeError, ValueError) as exc:
-            raise TranscriptError("transcript_unparseable", "invalid transcript JSONL") from exc
-        if not isinstance(value, dict):
-            raise TranscriptError("transcript_unparseable", "transcript lines must be JSON objects")
-        objects.append(value)
-    return objects
 
 
 def read_history(
@@ -150,29 +154,35 @@ def read_history(
         return []
     max_messages = min(int(max_messages), 6)
 
-    candidates: list[TranscriptMessage] = []
-    for obj in _json_objects(path):
-        for candidate in _extract_candidates(obj):
-            # Codex can emit the same completed message in adjacent JSONL
-            # records. Keep repeated wording when it is a real later turn.
-            if candidates and candidates[-1] == candidate:
+    per_role = 1 if max_messages == 1 else min(3, max_messages // 2)
+    target_count = 1 if max_messages == 1 else per_role * 2
+    counts = {"user": 0, "assistant": 0}
+    selected: list[TranscriptMessage] = []
+    previous: Optional[TranscriptMessage] = None
+    current_removed = False
+
+    for obj in _json_objects_reverse(path):
+        for candidate in reversed(_extract_candidates(obj)):
+            # Traversal is newest-first, so adjacent duplicate Codex records
+            # are still collapsed before selecting the recent window.
+            if candidate == previous:
                 continue
-            candidates.append(candidate)
+            previous = candidate
+            if (
+                not current_removed
+                and isinstance(current_prompt, str)
+                and candidate.role == "user"
+                and candidate.content == current_prompt
+            ):
+                current_removed = True
+                continue
+            if max_messages == 1:
+                return [candidate.as_dict()]
+            if counts[candidate.role] >= per_role:
+                continue
+            counts[candidate.role] += 1
+            selected.append(candidate)
+            if len(selected) == target_count:
+                return [item.as_dict() for item in reversed(selected)]
 
-    if isinstance(current_prompt, str):
-        for index in range(len(candidates) - 1, -1, -1):
-            candidate = candidates[index]
-            if candidate.role == "user" and candidate.content == current_prompt:
-                del candidates[index]
-                break
-
-    if max_messages == 1:
-        return [item.as_dict() for item in candidates[-1:]]
-
-    per_role = min(3, max_messages // 2)
-    selected_indices: set[int] = set()
-    for role in ("user", "assistant"):
-        role_indices = [index for index, item in enumerate(candidates) if item.role == role]
-        selected_indices.update(role_indices[-per_role:])
-    selected = [candidates[index] for index in sorted(selected_indices)]
-    return [item.as_dict() for item in selected[-max_messages:]]
+    return [item.as_dict() for item in reversed(selected)]

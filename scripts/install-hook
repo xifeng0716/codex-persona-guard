@@ -17,7 +17,7 @@ from typing import Any
 EVENT_NAME = "UserPromptSubmit"
 HOOK_COMMAND = 'python3 "$HOME/.codex/persona-guard/hook_client.py"'
 HOOK_TYPE = "command"
-HOOK_TIMEOUT_SECONDS = 5
+HOOK_TIMEOUT_SECONDS = 8
 
 
 def _home() -> Path:
@@ -81,6 +81,10 @@ def _install_event_entry(entry: Any, seen: list[bool]) -> tuple[Any | None, bool
         if seen[0]:
             return None, True
         seen[0] = True
+        if entry.get("timeout") != HOOK_TIMEOUT_SECONDS:
+            updated = dict(entry)
+            updated["timeout"] = HOOK_TIMEOUT_SECONDS
+            return updated, True
         return entry, False
 
     if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
@@ -94,6 +98,10 @@ def _install_event_entry(entry: Any, seen: list[bool]) -> tuple[Any | None, bool
                 changed = True
                 continue
             seen[0] = True
+            if child.get("timeout") != HOOK_TIMEOUT_SECONDS:
+                child = dict(child)
+                child["timeout"] = HOOK_TIMEOUT_SECONDS
+                changed = True
         children.append(child)
 
     if not changed:

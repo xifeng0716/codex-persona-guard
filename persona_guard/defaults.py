@@ -2,7 +2,7 @@
 
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
-DETECTOR_TIMEOUT_SECONDS = 4.0
+DETECTOR_TIMEOUT_SECONDS = 6.0
 HOOK_PORT = 43821
 
 DEFAULT_HIT_REMINDER = """〔只给你看，别复述〕

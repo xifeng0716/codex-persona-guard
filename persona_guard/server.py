@@ -44,7 +44,12 @@ class PersonaGuardApp:
             if static_dir is not None
             else Path(__file__).resolve().parent / "static"
         )
-        self._hook_lock = threading.RLock()
+        self._session_locks: dict[str, threading.RLock] = {}
+        self._session_locks_lock = threading.Lock()
+
+    def _session_lock(self, session_id: str) -> threading.RLock:
+        with self._session_locks_lock:
+            return self._session_locks.setdefault(session_id, threading.RLock())
 
     @property
     def model(self) -> str:
@@ -143,12 +148,11 @@ class PersonaGuardApp:
 
         if not isinstance(payload, dict):
             return {}
-        with self._hook_lock:
+        session_id, cwd = self._session_and_cwd(payload)
+        if session_id is None or cwd is None:
+            return {}
+        with self._session_lock(session_id):
             try:
-                session_id, cwd = self._session_and_cwd(payload)
-                if session_id is None or cwd is None:
-                    return {}
-
                 # Discovery is deliberately the first durable action. It is
                 # metadata only and never contains the submitted prompt.
                 self.storage.upsert_discovery(session_id, cwd)

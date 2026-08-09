@@ -120,6 +120,65 @@ class ServerTests(unittest.TestCase):
             }
         })
 
+    def test_different_sessions_can_run_concurrently(self):
+        self.storage.create_binding("thread 2", "thread", "s2", True, "REMINDER 2")
+        barrier = threading.Barrier(2)
+        original_classify = self.detector.classify
+
+        def classify(history, current_prompt, guard_state, policy_text):
+            barrier.wait(timeout=1)
+            return original_classify(history, current_prompt, guard_state, policy_text)
+
+        self.detector.classify = classify
+        outputs = []
+        threads = [
+            threading.Thread(target=lambda session=session: outputs.append(self.app.handle_hook(self.payload(session=session))))
+            for session in ("s1", "s2")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(outputs), 2)
+        self.assertEqual(len(self.detector.calls), 2)
+
+    def test_same_session_is_serialized(self):
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release_first = threading.Event()
+        call_count = 0
+        call_count_lock = threading.Lock()
+
+        def classify(history, current_prompt, guard_state, policy_text):
+            nonlocal call_count
+            with call_count_lock:
+                call_count += 1
+                call_number = call_count
+            if call_number == 1:
+                first_entered.set()
+                release_first.wait(timeout=1)
+            else:
+                second_entered.set()
+            return type("Decision", (), {"result": "NONE", "type": "other"})()
+
+        self.detector.classify = classify
+        first = threading.Thread(target=lambda: self.app.handle_hook(self.payload(prompt="first")))
+        second = threading.Thread(target=lambda: self.app.handle_hook(self.payload(prompt="second")))
+        first.start()
+        self.assertTrue(first_entered.wait(timeout=1))
+        second.start()
+        self.assertFalse(second_entered.wait(timeout=0.1))
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertTrue(second_entered.is_set())
+        self.assertEqual(call_count, 2)
+
     def test_http_api_and_static_serving(self):
         static_dir = Path(self.temp_dir.name) / "static"
         static_dir.mkdir()

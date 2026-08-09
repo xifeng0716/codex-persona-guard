@@ -30,6 +30,9 @@ class FakeResponse:
 
 
 class HookClientTests(unittest.TestCase):
+    def test_default_total_timeout_is_seven_seconds(self) -> None:
+        self.assertEqual(hook_client.TOTAL_TIMEOUT_SECONDS, 7.0)
+
     def run_client(self, payload: str) -> tuple[int, str]:
         output = io.StringIO()
         code = hook_client.main(io.StringIO(payload), output)

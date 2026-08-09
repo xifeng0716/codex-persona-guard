@@ -18,6 +18,7 @@ This document records decisions confirmed during the design interview. It is upd
 - An exact thread binding overrides a matching workspace binding. Reminder texts are never merged, and DeepSeek is called at most once for a submitted prompt.
 - A target can have at most one binding.
 - Guard State is isolated by Codex `session_id`, even when multiple threads use one workspace binding.
+- Hook calls for the same `session_id` run serially; different sessions may run concurrently.
 - Guard State remains keyed only by `session_id`; it does not track binding identity or add special binding-migration resets.
 - Deleting a binding removes the directly associated thread state where applicable. The first version adds no broader state-reconciliation layer.
 
@@ -35,6 +36,7 @@ This document records decisions confirmed during the design interview. It is upd
 - A thread with sparse history uses every available completed user/assistant message up to three messages per role, without padding or duplication.
 - Insufficient history is valid and does not prevent detection. An unreadable or unparseable transcript fails soft instead.
 - When six messages are available, the window contains the latest three user messages and three assistant messages and preserves the latest assistant response whenever possible.
+- The JSONL transcript is read backward from the file tail in blocks and stops once the recent window is complete.
 
 ## Activation Controls
 
@@ -76,8 +78,9 @@ This document records decisions confirmed during the design interview. It is upd
 - For compatibility with the owner's Lumen Nest environment, key discovery checks `GMEM_DEEPSEEK_API_KEY` and falls back to the portable `DEEPSEEK_API_KEY`.
 - Public setup documentation presents `DEEPSEEK_API_KEY` as the standard option.
 - The first version has no provider, model, endpoint, or API-key settings screen.
-- Each DeepSeek request has a four-second timeout and is never retried.
-- The hook allows at most five seconds for the complete local-service request.
+- Each DeepSeek request has a six-second timeout and is never retried.
+- The hook client allows at most seven seconds for the complete local-service request.
+- The Codex hook command timeout is eight seconds.
 - Timeouts, rate limits, server failures, network failures, and invalid responses fail soft, preserve Guard State, and create a key-free Calibration Record with an error category.
 
 ## Calibration Records
