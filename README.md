@@ -1,5 +1,7 @@
 # Persona Guard
 
+English | [简体中文](README.zh-CN.md)
+
 Persona Guard is a small localhost service plus a Codex `UserPromptSubmit`
 hook. It asks a lightweight DeepSeek detector whether the next reply is at
 risk of drifting into a generic assistant stance. Only a detector result of
